@@ -6,7 +6,10 @@ from http.server import BaseHTTPRequestHandler
 
 # Voice map: language code -> { male, female }
 VOICE_MAP = {
-    "en":  {"male": "en-US-GuyNeural",        "female": "en-US-JennyNeural"},
+    "en": {
+    "male": "en-US-DavisNeural",
+    "female": "en-US-AriaNeural"
+},
     "hi":  {"male": "hi-IN-MadhurNeural",      "female": "hi-IN-SwaraNeural"},
     "ta":  {"male": "ta-IN-ValluvarNeural",     "female": "ta-IN-PallaviNeural"},
     "te":  {"male": "te-IN-MohanNeural",        "female": "te-IN-ShrutiNeural"},
