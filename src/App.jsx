@@ -61,6 +61,70 @@ async function readJson(res) {
   try { return await res.json(); } catch { return {}; }
 }
 
+
+const SEGMENT_CHARS = 1800; // keeps each server call well under Vercel's time and size limits
+const SENTENCE_END = /(?<=[.!?।॥。！？؟])\s+/;
+
+// Strip markdown so notes don't get read aloud as "hash", "asterisk", etc.
+function cleanForSpeech(text) {
+  return text
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^\s{0,3}#{1,6}\s*/gm, "")
+    .replace(/^\s*[-*•]\s+/gm, "")
+    .replace(/^\s*>\s?/gm, "")
+    .replace(/(\*\*|__|\*|_|`)/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+// Split long text into parts on paragraph / sentence boundaries.
+function splitSegments(text, limit = SEGMENT_CHARS) {
+  const units = [];
+  for (const line of text.split("\n")) {
+    if (line.length <= limit) { units.push(line); continue; }
+    for (let sent of line.split(SENTENCE_END)) {
+      while (sent.length > limit) { units.push(sent.slice(0, limit)); sent = sent.slice(limit); }
+      units.push(sent);
+    }
+  }
+  const parts = [];
+  let cur = "";
+  for (const u of units) {
+    const next = cur ? cur + "\n" + u : u;
+    if (next.length <= limit) cur = next;
+    else { if (cur.trim()) parts.push(cur); cur = u; }
+  }
+  if (cur.trim()) parts.push(cur);
+  return parts.filter((x) => x.trim());
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// POST with retries for rate limits / temporary server errors
+async function postWithRetry(url, payload, signal, tries = 3) {
+  let lastErr;
+  for (let i = 0; i < tries; i++) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal,
+      });
+      if (res.ok) return res;
+      const err = await readJson(res);
+      lastErr = new Error(err.error || `Request failed (${res.status}).`);
+      if (![429, 500, 502, 503, 504].includes(res.status)) throw lastErr;
+    } catch (e) {
+      if (e.name === "AbortError") throw e;
+      lastErr = e;
+    }
+    if (i < tries - 1) await sleep(1500 * (i + 1));
+  }
+  throw lastErr;
+}
+
 function Waveform({ peaks, progress, onSeek }) {
   const ref = useRef(null);
   const dragging = useRef(false);
@@ -118,10 +182,13 @@ export default function App() {
   const [current, setCurrent] = useState(0);
   const [dragOver, setDragOver] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [translate, setTranslate] = useState(() => localStorage.getItem("vf_translate") !== "0");
+  const [partInfo, setPartInfo] = useState({ done: 0, total: 0 });
 
   const fileRef = useRef(null);
   const audioRef = useRef(null);
   const resultRef = useRef(null);
+  const abortRef = useRef(null);
 
   const busy = step === "working";
   const lang = LANGUAGES.find((l) => l.code === targetLang);
@@ -129,6 +196,7 @@ export default function App() {
   const duration = wave.duration || audioRef.current?.duration || 0;
 
   useEffect(() => { localStorage.setItem("vf_lang", targetLang); }, [targetLang]);
+  useEffect(() => { localStorage.setItem("vf_translate", translate ? "1" : "0"); }, [translate]);
 
   // Smooth playhead while playing
   useEffect(() => {
@@ -148,12 +216,13 @@ export default function App() {
   const resetOutput = () => {
     setTranslatedText(""); setAudioUrl(null); setErrorMsg("");
     setIsPlaying(false); setCurrent(0); setProgress("");
+    setPartInfo({ done: 0, total: 0 });
   };
 
   const handleFile = (file) => {
     if (!file) return;
-    if (!file.name.toLowerCase().endsWith(".txt") && file.type !== "text/plain") {
-      setErrorMsg("Only .txt files can be loaded. Save your text as .txt and try again.");
+    if (!/\.(txt|md)$/i.test(file.name) && file.type !== "text/plain") {
+      setErrorMsg("Only .txt or .md files can be loaded. Save your notes as .txt and try again.");
       setStep("error");
       return;
     }
@@ -169,36 +238,49 @@ export default function App() {
   }, []);
 
   const handleConvert = async () => {
-    const text = inputText.trim();
+    const text = cleanForSpeech(inputText);
     if (!text || busy) return;
     resetOutput();
     setStep("working");
 
-    try {
-      setProgress("Translating…");
-      const transRes = await fetch("/api/translate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, lang: targetLang }),
-      });
-      const transData = await readJson(transRes);
-      if (!transRes.ok) throw new Error(transData.error || `Translation failed (${transRes.status}). Try again.`);
-      const translated = transData.text || "";
-      if (!translated) throw new Error("Translation came back empty. Try different text.");
-      setTranslatedText(translated);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const parts = splitSegments(text);
+    const total = parts.length;
+    const texts = new Array(total).fill(null);
+    const audios = new Array(total).fill(null);
+    let done = 0;
+    let next = 0;
+    setPartInfo({ done: 0, total });
+    setProgress(total > 1 ? `Converting ${total} parts…` : translate ? "Translating…" : "Generating audio…");
 
-      setProgress("Generating audio…");
-      const ttsRes = await fetch("/api/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: translated, lang: targetLang, gender: voice, rate: speed }),
-      });
-      if (!ttsRes.ok) {
-        const err = await readJson(ttsRes);
-        throw new Error(err.error || `Audio generation failed (${ttsRes.status}). Try again.`);
+    const worker = async () => {
+      while (next < total) {
+        const i = next++;
+        let spoken = parts[i];
+        if (translate) {
+          const r = await postWithRetry("/api/translate", { text: parts[i], lang: targetLang }, controller.signal);
+          const d = await readJson(r);
+          spoken = d.text || "";
+          if (!spoken) throw new Error(`Translation of part ${i + 1} came back empty.`);
+        }
+        texts[i] = spoken;
+        let k = 0;
+        while (k < total && texts[k] !== null) k++;
+        setTranslatedText(texts.slice(0, k).join("\n\n"));
+
+        const t = await postWithRetry("/api/tts",
+          { text: spoken, lang: targetLang, gender: voice, rate: speed }, controller.signal);
+        audios[i] = await t.blob();
+        done++;
+        setPartInfo({ done, total });
       }
+    };
 
-      const blob = await ttsRes.blob();
+    try {
+      await Promise.all([worker(), worker()]);
+
+      const blob = new Blob(audios, { type: "audio/mpeg" });
       try { setWave(await analyseAudio(blob)); }
       catch { setWave({ peaks: Array(BUCKETS).fill(0.45), duration: 0 }); }
       setAudioUrl(URL.createObjectURL(blob));
@@ -206,11 +288,20 @@ export default function App() {
       setProgress("");
       resultRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     } catch (e) {
-      setErrorMsg(e.message || "Something went wrong. Try again.");
-      setStep("error");
+      controller.abort();
+      if (e.name === "AbortError") {
+        setStep("idle"); setErrorMsg("");
+      } else {
+        setErrorMsg(`${e.message || "Something went wrong."} Try again; if it keeps failing, split your text into smaller pieces.`);
+        setStep("error");
+      }
       setProgress("");
+    } finally {
+      abortRef.current = null;
     }
   };
+
+  const handleCancel = () => abortRef.current?.abort();
 
   const togglePlay = () => {
     const a = audioRef.current;
@@ -272,16 +363,16 @@ export default function App() {
           <div className="pane-head">
             <h2>Your text</h2>
             <div className="pane-actions">
-              <button className="ghost" onClick={() => fileRef.current?.click()}>Upload .txt</button>
+              <button className="ghost" onClick={() => fileRef.current?.click()}>Upload file</button>
               <button className="ghost" onClick={handleClear} disabled={!inputText && step === "idle"}>Clear</button>
             </div>
-            <input ref={fileRef} type="file" accept=".txt,text/plain" hidden
+            <input ref={fileRef} type="file" accept=".txt,.md,text/plain,text/markdown" hidden
               onChange={(e) => { handleFile(e.target.files[0]); e.target.value = ""; }} />
           </div>
 
           <textarea
             aria-label="Text to convert"
-            placeholder="Type or paste text here, or drop a .txt file on this panel."
+            placeholder="Paste your notes or book summary here, or drop a .txt or .md file on this panel."
             value={inputText}
             onChange={(e) => { setInputText(e.target.value); if (step === "error") setStep("idle"); }}
             onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") handleConvert(); }}
@@ -291,7 +382,7 @@ export default function App() {
             <span>{wordCount.toLocaleString()} words</span>
             <span>{inputText.length.toLocaleString()} characters</span>
           </div>
-          {dragOver && <div className="drop-hint">Drop .txt to load it</div>}
+          {dragOver && <div className="drop-hint">Drop file to load it</div>}
         </section>
 
         {/* RESULT */}
@@ -304,7 +395,20 @@ export default function App() {
           </div>
 
           <div className="result-body">
-            {busy && <div className="working"><span className="spinner" />{progress}</div>}
+            {busy && (
+              <div className="working-wrap">
+                <div className="working">
+                  <span className="spinner" />
+                  {partInfo.total > 1 ? `Part ${Math.min(partInfo.done + 1, partInfo.total)} of ${partInfo.total}` : progress}
+                  <button className="ghost" onClick={handleCancel}>Cancel</button>
+                </div>
+                {partInfo.total > 1 && (
+                  <div className="bar-track" aria-hidden="true">
+                    <div className="bar-fill" style={{ width: `${(partInfo.done / partInfo.total) * 100}%` }} />
+                  </div>
+                )}
+              </div>
+            )}
 
             {step === "error" && (
               <div className="error" role="alert">
@@ -313,7 +417,7 @@ export default function App() {
               </div>
             )}
 
-            {!busy && translatedText && (
+            {translatedText && (
               <p className="translated" lang={targetLang}>{translatedText}</p>
             )}
 
@@ -362,10 +466,18 @@ export default function App() {
       {/* CONTROLS */}
       <div className="console">
         <div className="field">
-          <label htmlFor="lang">Target language</label>
+          <label htmlFor="lang">{translate ? "Translate to" : "Read aloud in"}</label>
           <select id="lang" value={targetLang} onChange={(e) => setTargetLang(e.target.value)}>
             {LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
           </select>
+        </div>
+
+        <div className="field">
+          <span className="label" id="translate-label">Translation</span>
+          <div className="seg" role="group" aria-labelledby="translate-label">
+            <button aria-pressed={translate} onClick={() => setTranslate(true)}>On</button>
+            <button aria-pressed={!translate} onClick={() => setTranslate(false)}>Off</button>
+          </div>
         </div>
 
         <div className="field">
@@ -391,7 +503,7 @@ export default function App() {
         </div>
 
         <button className="convert" onClick={handleConvert} disabled={!inputText.trim() || busy}>
-          {busy ? <><span className="spinner" />{progress || "Working…"}</> : "Convert to MP3"}
+          {busy ? <><span className="spinner" />{partInfo.total > 1 ? `${partInfo.done}/${partInfo.total} done` : "Working…"}</> : "Convert to MP3"}
         </button>
       </div>
       <p className="hint">Tip: press Ctrl + Enter in the text box to convert.</p>
