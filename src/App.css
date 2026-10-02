@@ -1,7 +1,10 @@
+/* Theme tokens: light is the base, dark is applied via <html data-theme="dark"> */
 :root {
+  color-scheme: light;
   --bg: #e9eef5;
   --surface: #ffffff;
   --surface-2: #f3f6fa;
+  --seg-active: #ffffff;
   --ink: #101828;
   --ink-2: #4a5568;
   --ink-3: #7b8798;
@@ -9,6 +12,11 @@
   --accent: #3347ff;
   --accent-ink: #ffffff;
   --ember: #ff7a1a;
+  --mark-bg: #101828;
+  --mark-ink: #e9eef5;
+  --play-bg: #101828;
+  --play-ink: #e9eef5;
+  --wave-glow: none;
   --danger: #b42318;
   --danger-bg: #fef3f2;
   --danger-line: #fecdca;
@@ -19,22 +27,27 @@
     "DM Sans", system-ui, sans-serif;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0b0f17;
-    --surface: #131a26;
-    --surface-2: #19212f;
-    --ink: #e8ecf4;
-    --ink-2: #a8b2c4;
-    --ink-3: #6f7b90;
-    --line: #243044;
-    --accent: #6c7dff;
-    --accent-ink: #0b0f17;
-    --ember: #ff9340;
-    --danger: #ffb4ab;
-    --danger-bg: #2a1614;
-    --danger-line: #5c2a25;
-  }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #090d14;
+  --surface: #121824;
+  --surface-2: #19212f;
+  --seg-active: #28344b;
+  --ink: #e9eef7;
+  --ink-2: #a3aec2;
+  --ink-3: #6b778c;
+  --line: #243044;
+  --accent: #7485ff;
+  --accent-ink: #090d14;
+  --ember: #ff9340;
+  --mark-bg: #7485ff;
+  --mark-ink: #090d14;
+  --play-bg: #ff9340;
+  --play-ink: #090d14;
+  --wave-glow: drop-shadow(0 0 5px rgba(255, 147, 64, 0.45));
+  --danger: #ffb4ab;
+  --danger-bg: #2a1614;
+  --danger-line: #5c2a25;
 }
 
 * {
@@ -103,8 +116,8 @@ button:disabled {
   width: 36px;
   height: 36px;
   border-radius: 10px;
-  background: var(--ink);
-  color: var(--bg);
+  background: var(--mark-bg);
+  color: var(--mark-ink);
   display: grid;
   place-items: center;
 }
@@ -196,6 +209,14 @@ textarea {
 
 textarea::placeholder {
   color: var(--ink-3);
+}
+
+textarea {
+  caret-color: var(--accent);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 textarea:focus-visible {
@@ -312,10 +333,15 @@ textarea:focus-visible {
   height: 48px;
   border-radius: 50%;
   border: none;
-  background: var(--ink);
-  color: var(--bg);
+  background: var(--play-bg);
+  color: var(--play-ink);
   display: grid;
   place-items: center;
+  transition: transform 0.12s;
+}
+
+.play:active {
+  transform: scale(0.94);
 }
 
 .wave {
@@ -341,6 +367,7 @@ textarea:focus-visible {
 .bar.played {
   background: var(--ember);
   opacity: 1;
+  filter: var(--wave-glow);
 }
 
 .player-meta {
@@ -425,7 +452,7 @@ select {
 }
 
 .seg button[aria-pressed="true"] {
-  background: var(--surface);
+  background: var(--seg-active);
   color: var(--ink);
   font-weight: 600;
   box-shadow: 0 0 0 1px var(--line);
@@ -556,4 +583,39 @@ select {
   height: 100%;
   background: var(--accent);
   transition: width 0.3s;
+}
+
+/* ---------- theme toggle ---------- */
+.top-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.theme-toggle {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-2);
+  display: grid;
+  place-items: center;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.theme-toggle:hover {
+  color: var(--ink);
+  border-color: var(--ink-3);
+}
+
+select option {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+@media (max-width: 820px) {
+  .tag {
+    display: none;
+  }
 }
