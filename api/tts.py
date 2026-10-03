@@ -31,21 +31,61 @@ VOICE_MAP = {
     "ar":  {"male": "ar-SA-HamedNeural",        "female": "ar-SA-ZariyahNeural"},
 }
 
-async def generate_audio(text: str, lang: str, gender: str, rate: str) -> bytes:
-    voice_gender = gender if gender in ("male", "female") else "female"
-    lang_key = lang if lang in VOICE_MAP else "en"
-    voice = VOICE_MAP[lang_key][voice_gender]
+# Reader styles: offsets applied on top of the speed setting.
+# rate/volume are in %, pitch is in Hz.
+STYLES = {
+    "natural": {"rate": 0,   "pitch": 0,  "volume": 0},
+    "news":    {"rate": -6,  "pitch": -3, "volume": 5},   # measured, clear, authoritative
+    "podcast": {"rate": 3,   "pitch": 1,  "volume": 0},   # warm, conversational
+    "story":   {"rate": -12, "pitch": -2, "volume": -3},  # slower, audiobook narrator
+}
 
-    rate_map = {"slow": "-20%", "normal": "+0%", "fast": "+30%"}
-    rate_str = rate_map.get(rate, "+0%")
+# English has several voices, so style can also pick a different speaker.
+# If a voice isn't available, we fall back to the default voice for the language.
+EN_STYLE_VOICES = {
+    "news":    {"male": "en-US-GuyNeural",              "female": "en-US-JennyNeural"},
+    "podcast": {"male": "en-US-AndrewMultilingualNeural", "female": "en-US-AvaMultilingualNeural"},
+    "story":   {"male": "en-GB-RyanNeural",             "female": "en-GB-SoniaNeural"},
+}
 
-    communicate = edge_tts.Communicate(text, voice, rate=rate_str)
+SPEED_RATE = {"slow": -20, "normal": 0, "fast": 30}
+
+
+async def _synth(text, voice, rate, pitch, volume):
+    communicate = edge_tts.Communicate(
+        text, voice,
+        rate=f"{rate:+d}%", pitch=f"{pitch:+d}Hz", volume=f"{volume:+d}%",
+    )
     buf = io.BytesIO()
     async for chunk in communicate.stream():
         if chunk["type"] == "audio":
             buf.write(chunk["data"])
-    buf.seek(0)
-    return buf.read()
+    data = buf.getvalue()
+    if not data:
+        raise RuntimeError("no audio returned")
+    return data
+
+
+async def generate_audio(text: str, lang: str, gender: str, rate: str, style: str = "natural") -> bytes:
+    voice_gender = gender if gender in ("male", "female") else "female"
+    lang_key = lang if lang in VOICE_MAP else "en"
+    style_key = style if style in STYLES else "natural"
+    st = STYLES[style_key]
+
+    total_rate = max(-50, min(100, SPEED_RATE.get(rate, 0) + st["rate"]))
+
+    voices = []
+    if lang_key == "en" and style_key in EN_STYLE_VOICES:
+        voices.append(EN_STYLE_VOICES[style_key][voice_gender])
+    voices.append(VOICE_MAP[lang_key][voice_gender])
+
+    last_err = None
+    for voice in voices:
+        try:
+            return await _synth(text, voice, total_rate, st["pitch"], st["volume"])
+        except Exception as e:  # try the default voice next
+            last_err = e
+    raise last_err
 
 
 class handler(BaseHTTPRequestHandler):
@@ -62,12 +102,13 @@ class handler(BaseHTTPRequestHandler):
             lang   = body.get("lang", "en")
             gender = body.get("gender", "female")
             rate   = body.get("rate", "normal")
+            style  = body.get("style", "natural")
 
             if not text.strip():
                 self._error(400, "No text provided")
                 return
 
-            audio_bytes = asyncio.run(generate_audio(text, lang, gender, rate))
+            audio_bytes = asyncio.run(generate_audio(text, lang, gender, rate, style))
 
             self.send_response(200)
             self._set_cors()

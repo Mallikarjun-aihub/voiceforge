@@ -24,6 +24,13 @@ const LANGUAGES = [
   { code: "ar", label: "Arabic (العربية)" },
 ];
 
+const STYLES = [
+  { id: "natural", label: "Natural" },
+  { id: "news", label: "News reader" },
+  { id: "podcast", label: "Podcast host" },
+  { id: "story", label: "Storyteller" },
+];
+
 const BUCKETS = 64;
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 const fmt = (s) => {
@@ -172,6 +179,10 @@ export default function App() {
   const [targetLang, setTargetLang] = useState(() => localStorage.getItem("vf_lang") || "hi");
   const [voice, setVoice] = useState("female");
   const [speed, setSpeed] = useState("normal");
+  const [style, setStyle] = useState(() => {
+    const saved = localStorage.getItem("vf_style");
+    return STYLES.some((s) => s.id === saved) ? saved : "natural";
+  });
   const [translatedText, setTranslatedText] = useState("");
   const [step, setStep] = useState("idle"); // idle | working | done | error
   const [progress, setProgress] = useState("");
@@ -183,6 +194,7 @@ export default function App() {
   const [dragOver, setDragOver] = useState(false);
   const [copied, setCopied] = useState(false);
   const [translate, setTranslate] = useState(() => localStorage.getItem("vf_translate") !== "0");
+  const [theme, setTheme] = useState(() => document.documentElement.dataset.theme || "dark");
   const [partInfo, setPartInfo] = useState({ done: 0, total: 0 });
 
   const fileRef = useRef(null);
@@ -196,6 +208,11 @@ export default function App() {
   const duration = wave.duration || audioRef.current?.duration || 0;
 
   useEffect(() => { localStorage.setItem("vf_lang", targetLang); }, [targetLang]);
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try { localStorage.setItem("vf_theme", theme); } catch { /* storage blocked */ }
+  }, [theme]);
+  useEffect(() => { localStorage.setItem("vf_style", style); }, [style]);
   useEffect(() => { localStorage.setItem("vf_translate", translate ? "1" : "0"); }, [translate]);
 
   // Smooth playhead while playing
@@ -259,7 +276,7 @@ export default function App() {
         const i = next++;
         let spoken = parts[i];
         if (translate) {
-          const r = await postWithRetry("/api/translate", { text: parts[i], lang: targetLang }, controller.signal);
+          const r = await postWithRetry("/api/translate", { text: parts[i], lang: targetLang, style }, controller.signal);
           const d = await readJson(r);
           spoken = d.text || "";
           if (!spoken) throw new Error(`Translation of part ${i + 1} came back empty.`);
@@ -270,7 +287,7 @@ export default function App() {
         setTranslatedText(texts.slice(0, k).join("\n\n"));
 
         const t = await postWithRetry("/api/tts",
-          { text: spoken, lang: targetLang, gender: voice, rate: speed }, controller.signal);
+          { text: spoken, lang: targetLang, gender: voice, rate: speed, style }, controller.signal);
         audios[i] = await t.blob();
         done++;
         setPartInfo({ done, total });
@@ -349,7 +366,19 @@ export default function App() {
           </span>
           <span className="name">VoiceForge</span>
         </div>
-        <p className="tag">Translate text into 20 languages and download it as an MP3.</p>
+        <div className="top-right">
+          <p className="tag">Translate text into 20 languages and download it as an MP3.</p>
+          <button
+            className="theme-toggle"
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+            title={theme === "dark" ? "Light theme" : "Dark theme"}
+          >
+            {theme === "dark"
+              ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
+              : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></svg>}
+          </button>
+        </div>
       </header>
 
       <main className="bench">
@@ -489,6 +518,13 @@ export default function App() {
               </button>
             ))}
           </div>
+        </div>
+
+        <div className="field">
+          <label htmlFor="style">Reading style</label>
+          <select id="style" className="select-sm" value={style} onChange={(e) => setStyle(e.target.value)}>
+            {STYLES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+          </select>
         </div>
 
         <div className="field">
