@@ -1,6 +1,13 @@
 import asyncio
+import base64
 import io
 import json
+import os
+import re
+import time
+import urllib.error
+import urllib.request
+import wave
 import edge_tts
 from http.server import BaseHTTPRequestHandler
 
@@ -88,6 +95,117 @@ async def generate_audio(text: str, lang: str, gender: str, rate: str, style: st
     raise last_err
 
 
+# ---------------------------------------------------------------------------
+# Realistic voices: Gemini TTS (needs GEMINI_API_KEY). Falls back to edge-tts.
+# ---------------------------------------------------------------------------
+
+# Prebuilt Gemini voices are multilingual: the same voice speaks every language
+# and the language is detected from the text. Swap the names freely after
+# auditioning voices in Google AI Studio (aistudio.google.com/generate-speech).
+GEMINI_VOICES = {
+    "natural": {"male": "Charon", "female": "Kore"},
+    "news":    {"male": "Orus",   "female": "Kore"},
+    "podcast": {"male": "Achird", "female": "Sulafat"},
+    "story":   {"male": "Algieba", "female": "Gacrux"},
+}
+
+# Delivery directions go in speech_metadata.style (never spoken aloud).
+GEMINI_STYLE = {
+    "natural": "",
+    "news": "calm, clear and authoritative, like a professional news anchor",
+    "podcast": "warm, relaxed and conversational, like a friendly podcast host",
+    "story": "expressive and unhurried, like an audiobook narrator",
+}
+GEMINI_PACE = {"slow": "speaking slowly", "normal": "", "fast": "speaking at a brisk pace"}
+
+
+def _gemini_tts_models():
+    names = [os.environ.get("GEMINI_TTS_MODEL"), "gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts"]
+    seen, out = set(), []
+    for n in names:
+        if n and n not in seen:
+            seen.add(n)
+            out.append(n)
+    return out
+
+
+def _prep_for_gemini(text):
+    # Paragraph breaks become a short pause so notes sound read, not rushed.
+    return re.sub(r"\n\s*\n+", " <short pause> ", text.strip())
+
+
+def _pcm_from_audio(raw):
+    """Return (pcm_bytes, sample_rate). Accepts raw L16 or a WAV with RIFF header."""
+    if raw[:4] == b"RIFF":
+        with wave.open(io.BytesIO(raw), "rb") as w:
+            return w.readframes(w.getnframes()), w.getframerate()
+    return raw, 24000
+
+
+def _pcm_to_mp3(pcm, rate):
+    import lameenc  # imported lazily so a packaging problem only disables this engine
+
+    enc = lameenc.Encoder()
+    enc.set_bit_rate(96)
+    enc.set_in_sample_rate(rate)
+    enc.set_channels(1)
+    enc.set_quality(2)
+    return bytes(enc.encode(pcm)) + bytes(enc.flush())
+
+
+def gemini_tts(text, gender, rate, style):
+    key = os.environ.get("GEMINI_API_KEY")
+    if not key:
+        raise RuntimeError("GEMINI_API_KEY is not set")
+    voice_gender = gender if gender in ("male", "female") else "female"
+    style_key = style if style in GEMINI_VOICES else "natural"
+    voice = GEMINI_VOICES[style_key][voice_gender]
+    style_text = ", ".join(x for x in (GEMINI_STYLE[style_key], GEMINI_PACE.get(rate, "")) if x)
+
+    block = {"type": "text", "text": _prep_for_gemini(text)}
+    if style_text:
+        block["annotations"] = [{"type": "speech_metadata", "style": style_text}]
+    body = json.dumps({
+        "input": [{"type": "user_input", "content": [block]}],
+        "response_format": {"type": "audio", "mime_type": "audio/l16", "sample_rate": 24000},
+        "generation_config": {"speech_config": [{"voice": voice}]},
+    })
+
+    deadline = time.time() + 45  # stay inside the 60s function limit
+    errors = []
+    for model in _gemini_tts_models():
+        budget = min(40, deadline - time.time())
+        if budget < 5:
+            break
+        payload = json.loads(body)
+        payload["model"] = model
+        req = urllib.request.Request(
+            "https://generativelanguage.googleapis.com/v1beta/interactions",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json", "x-goog-api-key": key},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=budget) as r:
+                data = json.loads(r.read())
+            audio_b64 = None
+            for step in data.get("steps", []):
+                for c in step.get("content", []) or []:
+                    if c.get("type") == "audio" and c.get("data"):
+                        audio_b64 = c["data"]
+            if not audio_b64:
+                raise RuntimeError("no audio in response")
+            pcm, sr = _pcm_from_audio(base64.b64decode(audio_b64))
+            if not pcm:
+                raise RuntimeError("empty audio")
+            return _pcm_to_mp3(pcm, sr)
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", "ignore")[:120].replace("\n", " ")
+            errors.append(f"{model} HTTP {e.code} {detail}")
+        except Exception as e:
+            errors.append(f"{model} {e}")
+    raise RuntimeError("; ".join(errors) or "no time left")
+
+
 class handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(200)
@@ -103,16 +221,29 @@ class handler(BaseHTTPRequestHandler):
             gender = body.get("gender", "female")
             rate   = body.get("rate", "normal")
             style  = body.get("style", "natural")
+            engine = body.get("engine", "realistic")
 
             if not text.strip():
                 self._error(400, "No text provided")
                 return
 
-            audio_bytes = asyncio.run(generate_audio(text, lang, gender, rate, style))
+            audio_bytes, used, reason = None, "edge", ""
+            if engine == "realistic":
+                try:
+                    audio_bytes = gemini_tts(text, gender, rate, style)
+                    used = "gemini"
+                except Exception as e:  # fall back to the standard voice
+                    reason = str(e)
+            if audio_bytes is None:
+                audio_bytes = asyncio.run(generate_audio(text, lang, gender, rate, style))
 
             self.send_response(200)
             self._set_cors()
             self.send_header("Content-Type", "audio/mpeg")
+            self.send_header("X-TTS-Engine", used)
+            if reason:
+                safe = reason.encode("latin-1", "ignore").decode("latin-1").replace("\r", " ").replace("\n", " ")[:180]
+                self.send_header("X-TTS-Reason", safe)
             self.send_header("Content-Disposition", f'attachment; filename="voiceforge_{lang}_{gender}.mp3"')
             self.send_header("Content-Length", str(len(audio_bytes)))
             self.end_headers()
@@ -125,6 +256,7 @@ class handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Expose-Headers", "X-TTS-Engine, X-TTS-Reason")
 
     def _error(self, code, msg):
         body = json.dumps({"error": msg}).encode()

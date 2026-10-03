@@ -179,6 +179,8 @@ export default function App() {
   const [targetLang, setTargetLang] = useState(() => localStorage.getItem("vf_lang") || "hi");
   const [voice, setVoice] = useState("female");
   const [speed, setSpeed] = useState("normal");
+  const [engine, setEngine] = useState(() => (localStorage.getItem("vf_engine") === "standard" ? "standard" : "realistic"));
+  const [engineNote, setEngineNote] = useState("");
   const [style, setStyle] = useState(() => {
     const saved = localStorage.getItem("vf_style");
     return STYLES.some((s) => s.id === saved) ? saved : "natural";
@@ -213,6 +215,7 @@ export default function App() {
     try { localStorage.setItem("vf_theme", theme); } catch { /* storage blocked */ }
   }, [theme]);
   useEffect(() => { localStorage.setItem("vf_style", style); }, [style]);
+  useEffect(() => { localStorage.setItem("vf_engine", engine); }, [engine]);
   useEffect(() => { localStorage.setItem("vf_translate", translate ? "1" : "0"); }, [translate]);
 
   // Smooth playhead while playing
@@ -234,6 +237,7 @@ export default function App() {
     setTranslatedText(""); setAudioUrl(null); setErrorMsg("");
     setIsPlaying(false); setCurrent(0); setProgress("");
     setPartInfo({ done: 0, total: 0 });
+    setEngineNote("");
   };
 
   const handleFile = (file) => {
@@ -266,6 +270,8 @@ export default function App() {
     const total = parts.length;
     const texts = new Array(total).fill(null);
     const audios = new Array(total).fill(null);
+    const engines = new Array(total).fill(null);
+    const reasons = new Array(total).fill("");
     let done = 0;
     let next = 0;
     setPartInfo({ done: 0, total });
@@ -287,8 +293,10 @@ export default function App() {
         setTranslatedText(texts.slice(0, k).join("\n\n"));
 
         const t = await postWithRetry("/api/tts",
-          { text: spoken, lang: targetLang, gender: voice, rate: speed, style }, controller.signal);
+          { text: spoken, lang: targetLang, gender: voice, rate: speed, style, engine }, controller.signal);
         audios[i] = await t.blob();
+        engines[i] = t.headers.get("X-TTS-Engine") || "edge";
+        if (engines[i] !== "gemini") reasons[i] = t.headers.get("X-TTS-Reason") || "";
         done++;
         setPartInfo({ done, total });
       }
@@ -296,6 +304,18 @@ export default function App() {
 
     try {
       await Promise.all([worker(), worker()]);
+
+      if (engine === "realistic") {
+        const fallback = engines.filter((e) => e !== "gemini").length;
+        if (fallback > 0) {
+          const why = reasons.filter(Boolean).pop() || "";
+          console.warn("VoiceForge: realistic voice unavailable:", why);
+          setEngineNote(
+            `${fallback} of ${total} ${total === 1 ? "part" : "parts"} used the standard voice because the realistic voice was unavailable` +
+            `${why ? ` (${why})` : ""}. Wait a minute and convert again to retry.`
+          );
+        }
+      }
 
       const blob = new Blob(audios, { type: "audio/mpeg" });
       try { setWave(await analyseAudio(blob)); }
@@ -489,6 +509,7 @@ export default function App() {
               />
             </div>
           )}
+          {engineNote && <p className="note" role="status">{engineNote}</p>}
         </section>
       </main>
 
@@ -517,6 +538,14 @@ export default function App() {
                 {v === "male" ? "Male" : "Female"}
               </button>
             ))}
+          </div>
+        </div>
+
+        <div className="field">
+          <span className="label" id="engine-label">Voice quality</span>
+          <div className="seg" role="group" aria-labelledby="engine-label">
+            <button aria-pressed={engine === "realistic"} onClick={() => setEngine("realistic")}>Realistic</button>
+            <button aria-pressed={engine === "standard"} onClick={() => setEngine("standard")}>Standard</button>
           </div>
         </div>
 

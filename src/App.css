@@ -430,7 +430,7 @@ select {
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 9px 12px;
-  min-width: 210px;
+  min-width: 190px;
   font-size: 15px;
 }
 
@@ -629,4 +629,15 @@ select option {
   .select-sm {
     min-width: 0;
   }
+}
+
+.note {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 13px;
+  overflow-wrap: anywhere;
 }

@@ -9,7 +9,8 @@ VoiceForge turns your notes, book summaries, or any text into natural-sounding s
 * 📝 **Built for long text:** paste notes or whole book summaries. The text is split into parts, converted in parallel, and stitched into one MP3
 * 🌍 **20 languages:** English, Hindi, Kannada, Tamil, Telugu, Malayalam, Marathi, Bengali, Gujarati, Punjabi, French, German, Spanish, Italian, Portuguese, Russian, Chinese, Japanese, Korean, Arabic
 * 🔁 **Translation on/off:** translate before speaking, or read your text as is
-* 🎧 **Natural neural voices:** male and female voice for every language
+* 🎧 **Realistic voices:** Gemini TTS for human-like speech in all 20 languages, with a one-click Standard voice option (Edge neural voices) as backup
+* 🎙️ **Reading styles:** Natural, News reader, Podcast host, or Storyteller. The style directs the delivery of the voice, and the translation is phrased the way that kind of speaker would say it
 * ⏱️ **Speed control:** slow, normal, or fast
 * 📊 **Waveform player:** real waveform from the generated audio, click or drag to seek, time counter
 * 📥 **One-click MP3 download**, plus a copy button for the translated text
@@ -22,7 +23,7 @@ VoiceForge turns your notes, book summaries, or any text into natural-sounding s
 
 * **Frontend:** React 18, Vite, plain CSS (design tokens, no UI framework)
 * **Backend:** Python serverless functions on Vercel (`api/`)
-* **Text-to-speech:** [`edge-tts`](https://github.com/rany2/edge-tts) (Microsoft Edge neural voices)
+* **Text-to-speech:** Google Gemini TTS (realistic voices, primary) with [`edge-tts`](https://github.com/rany2/edge-tts) as automatic fallback; `lameenc` encodes Gemini audio to MP3
 * **Translation:** Google Gemini API (primary), with Microsoft Edge translator and Google Translate (`deep-translator`) as fallbacks
 * **Hosting:** Vercel
 
@@ -30,7 +31,7 @@ VoiceForge turns your notes, book summaries, or any text into natural-sounding s
 
 ```text
 Text  →  clean markdown  →  split into ~1,800-char parts
-      →  for each part (2 at a time):  translate  →  text-to-speech
+      →  for each part (2 at a time):  translate  →  text-to-speech (Gemini, falls back to Edge)
       →  join the MP3 parts  →  waveform player + download
 ```
 
@@ -72,22 +73,27 @@ vercel dev
 2. Add the environment variable `GEMINI_API_KEY` (type: Secret) under Project → Settings → Environment Variables.
 3. Redeploy so the variable is picked up.
 
-Optional: set `GEMINI_MODEL` to override the default Gemini model.
+Optional environment variables:
+
+* `GEMINI_MODEL`: override the translation model
+* `GEMINI_TTS_MODEL`: override the speech model (defaults to `gemini-3.8-flash-tts`, then `gemini-3.8-flash-lite-tts`)
+
+Voices are chosen in the `GEMINI_VOICES` map in `api/tts.py`. Audition voices in [Google AI Studio](https://aistudio.google.com/generate-speech) and swap the names to taste.
 
 ## 📁 Project Structure
 
 ```text
 voiceforge/
 ├── api/
-│   ├── translate.py     # Translation: Gemini → Microsoft → Google fallback, chunking
-│   └── tts.py           # Text-to-speech with edge-tts (voice, speed)
+│   ├── translate.py     # Translation: Gemini → Microsoft → Google fallback, chunking, style-aware prompts
+│   └── tts.py           # Text-to-speech: Gemini TTS first, edge-tts fallback, MP3 output
 ├── public/
 ├── src/
 │   ├── App.jsx          # UI, long-text pipeline, waveform player, theme toggle
 │   ├── App.css          # Design tokens and styles (light + dark)
 │   └── main.jsx
 ├── index.html
-├── requirements.txt     # edge-tts, deep-translator
+├── requirements.txt     # edge-tts, deep-translator, lameenc
 ├── vercel.json          # 60s function timeout, routing
 ├── vite.config.js
 └── package.json
@@ -96,11 +102,15 @@ voiceforge/
 ## ⚠️ Notes
 
 * The Gemini free tier has rate limits and is not intended for commercial use; your input may be used by Google to improve its products. Avoid pasting private text, and use a paid key for production.
-* Very long texts translate more slowly on the free tier. Turning translation off skips Gemini entirely.
+* Very long texts translate more slowly on the free tier. Turning translation off skips Gemini translation entirely.
+* The Gemini TTS free tier has lower rate limits. If the realistic voice is unavailable for a part, VoiceForge falls back to the Standard voice for that part and tells you. Wait a minute and convert again for fully realistic audio.
+* Gemini TTS is a paid API after the free tier, and its prices change on January 1, 2027. Check the [pricing page](https://ai.google.dev/gemini-api/docs/pricing) before relying on it at scale.
 
 ## 🔮 Future Enhancements
 
-* Pitch control and more voice options
+* Voice picker with audition samples (Gemini voice library)
+* Custom voice design
+* Manual pitch control and more voice options
 * Audio history
 * PDF and EPUB upload
 * Per-part retry and resume for very long texts
@@ -117,4 +127,4 @@ This project is licensed under the MIT License.
 
 CSE (AI & Machine Learning) Student
 
-Passionate about AI, Cloud Computing.
+Passionate about AI, Cloud Computing, and Full-Stack Development.
