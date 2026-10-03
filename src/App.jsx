@@ -109,7 +109,7 @@ function splitSegments(text, limit = SEGMENT_CHARS) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // POST with retries for rate limits / temporary server errors
-async function postWithRetry(url, payload, signal, tries = 3) {
+async function postWithRetry(url, payload, signal, tries = 4) {
   let lastErr;
   for (let i = 0; i < tries; i++) {
     try {
@@ -127,7 +127,7 @@ async function postWithRetry(url, payload, signal, tries = 3) {
       if (e.name === "AbortError") throw e;
       lastErr = e;
     }
-    if (i < tries - 1) await sleep(1500 * (i + 1));
+    if (i < tries - 1) await sleep([2000, 8000, 20000][i] ?? 20000); // long enough for per-minute quota windows
   }
   throw lastErr;
 }

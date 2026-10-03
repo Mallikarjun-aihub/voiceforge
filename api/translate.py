@@ -127,8 +127,12 @@ STYLE_PROMPTS = {
 }
 
 
+# model -> time until which we skip it (after a quota or not-found error)
+_cooldown = {}
+
+
 def _gemini_models():
-    names = [os.environ.get("GEMINI_MODEL"), "gemini-flash-latest", "gemini-flash-lite-latest"]
+    names = [os.environ.get("GEMINI_MODEL"), "gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-flash-latest"]
     seen, out = set(), []
     for n in names:
         if n and n not in seen:
@@ -172,16 +176,22 @@ def translate_gemini(chunks, lang, style=None):
     out, errors = [], []
     for chunk in chunks:
         for model in _gemini_models():
+            if _cooldown.get(model, 0) > time.time():
+                continue
             try:
                 out.append(_gemini_call(model, key, chunk, lang_name, style))
                 break
             except urllib.error.HTTPError as e:
                 detail = e.read().decode("utf-8", "ignore")[:150]
                 errors.append(f"{model} HTTP {e.code} {detail}")
+                if e.code in (400, 404):
+                    _cooldown[model] = time.time() + 3600  # model name not usable
+                elif e.code == 429:
+                    _cooldown[model] = time.time() + 60    # quota: try the next model meanwhile
             except Exception as e:
                 errors.append(f"{model} {e}")
         else:
-            raise RuntimeError("; ".join(errors))
+            raise RuntimeError("; ".join(errors) or "Gemini models are cooling down after earlier errors")
     return out
 
 
