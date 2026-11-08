@@ -340,7 +340,8 @@ textarea:focus-visible {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 16px;
-  margin-bottom: 16px;
+  margin-top: 16px;
+  flex-shrink: 0;
 }
 
 .deck-main {
@@ -390,6 +391,22 @@ textarea:focus-visible {
 .bar.played {
   background: var(--ember);
   opacity: 1;
+}
+
+/* Bars pulse out of phase while audio plays (transform only, so it stays smooth) */
+.wave.playing .bar {
+  animation: pulse 900ms ease-in-out infinite alternate;
+  animation-delay: calc(var(--i) * -41ms);
+}
+
+@keyframes pulse {
+  from {
+    transform: scaleY(0.4);
+  }
+
+  to {
+    transform: scaleY(1);
+  }
 }
 
 .deck-meta {
@@ -714,6 +731,10 @@ kbd {
 @media (prefers-reduced-motion: reduce) {
   .spinner {
     animation-duration: 2s;
+  }
+
+  .wave.playing .bar {
+    animation: none;
   }
 
   * {
