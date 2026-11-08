@@ -134,7 +134,7 @@ async function postWithRetry(url, payload, signal, tries = 4) {
   throw lastErr;
 }
 
-function Waveform({ peaks, progress, onSeek }) {
+function Waveform({ peaks, progress, onSeek, playing }) {
   const ref = useRef(null);
   const dragging = useRef(false);
 
@@ -146,7 +146,7 @@ function Waveform({ peaks, progress, onSeek }) {
   return (
     <div
       ref={ref}
-      className="wave"
+      className={`wave${playing ? " playing" : ""}`}
       role="slider"
       tabIndex={0}
       aria-label="Seek audio"
@@ -169,7 +169,7 @@ function Waveform({ peaks, progress, onSeek }) {
         <span
           key={i}
           className={`bar${(i + 0.5) / peaks.length <= progress ? " played" : ""}`}
-          style={{ height: `${Math.max(10, p * 100)}%` }}
+          style={{ height: `${Math.max(10, p * 100)}%`, "--i": i }}
         />
       ))}
     </div>
@@ -445,39 +445,6 @@ export default function App() {
             )}
           </div>
 
-          {audioUrl && (
-            <div className="deck">
-              <button className="play" onClick={togglePlay} aria-label={isPlaying ? "Pause" : "Play"}>
-                {isPlaying
-                  ? <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1" /><rect x="14" y="4" width="4" height="16" rx="1" /></svg>
-                  : <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12-7.5a1 1 0 0 0 0-1.72l-12-7.5A1 1 0 0 0 7 4.5z" /></svg>}
-              </button>
-
-              <div className="deck-main">
-                <Waveform peaks={wave.peaks} progress={duration ? current / duration : 0} onSeek={seek} />
-                <div className="deck-meta">
-                  <p className="time"><span>{fmt(current)}</span> / {fmt(duration)}</p>
-                  <button className="download" onClick={handleDownload}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
-                    </svg>
-                    Download MP3
-                  </button>
-                </div>
-              </div>
-
-              <audio
-                ref={audioRef}
-                src={audioUrl}
-                onPlay={() => setIsPlaying(true)}
-                onPause={() => setIsPlaying(false)}
-                onEnded={() => { setIsPlaying(false); setCurrent(0); }}
-                onLoadedMetadata={() => setCurrent(0)}
-                hidden
-              />
-            </div>
-          )}
-
           <div className="result-body">
             {busy && (
               <div className="working-wrap">
@@ -517,6 +484,39 @@ export default function App() {
               </div>
             )}
           </div>
+
+          {audioUrl && (
+            <div className="deck">
+              <button className="play" onClick={togglePlay} aria-label={isPlaying ? "Pause" : "Play"}>
+                {isPlaying
+                  ? <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1" /><rect x="14" y="4" width="4" height="16" rx="1" /></svg>
+                  : <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12-7.5a1 1 0 0 0 0-1.72l-12-7.5A1 1 0 0 0 7 4.5z" /></svg>}
+              </button>
+
+              <div className="deck-main">
+                <Waveform peaks={wave.peaks} progress={duration ? current / duration : 0} onSeek={seek} playing={isPlaying} />
+                <div className="deck-meta">
+                  <p className="time"><span>{fmt(current)}</span> / {fmt(duration)}</p>
+                  <button className="download" onClick={handleDownload}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                    Download MP3
+                  </button>
+                </div>
+              </div>
+
+              <audio
+                ref={audioRef}
+                src={audioUrl}
+                onPlay={() => setIsPlaying(true)}
+                onPause={() => setIsPlaying(false)}
+                onEnded={() => { setIsPlaying(false); setCurrent(0); }}
+                onLoadedMetadata={() => setCurrent(0)}
+                hidden
+              />
+            </div>
+          )}
 
           {engineNote && <p className="note" role="status">{engineNote}</p>}
         </section>

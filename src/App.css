@@ -334,26 +334,26 @@ textarea:focus-visible {
 .deck {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 16px;
+  gap: 12px;
   align-items: center;
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: 12px;
-  padding: 16px;
-  margin-top: 16px;
+  padding: 12px;
+  margin-top: 12px;
   flex-shrink: 0;
 }
 
 .deck-main {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 4px;
   min-width: 0;
 }
 
 .play {
-  width: 56px;
-  height: 56px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   border: none;
   background: var(--play-bg);
@@ -369,10 +369,10 @@ textarea:focus-visible {
 
 /* The waveform is the one place that carries color */
 .wave {
-  height: 80px;
+  height: 36px;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   cursor: pointer;
   touch-action: none;
   border-radius: 4px;
@@ -418,9 +418,9 @@ textarea:focus-visible {
 
 .time {
   font-family: var(--display);
-  font-size: 24px;
+  font-size: 16px;
   font-weight: 500;
-  line-height: 1.2;
+  line-height: 1.5;
   color: var(--ink-3);
   font-variant-numeric: tabular-nums;
 }
