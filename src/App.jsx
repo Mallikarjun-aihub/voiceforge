@@ -32,6 +32,8 @@ const STYLES = [
 ];
 
 const BUCKETS = 64;
+// Static outline shown before any audio exists
+const SKETCH = Array.from({ length: BUCKETS }, (_, i) => 0.18 + 0.82 * Math.abs(Math.sin(i * 0.5) * Math.cos(i * 0.13)));
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 const fmt = (s) => {
   if (!Number.isFinite(s)) return "0:00";
@@ -387,7 +389,7 @@ export default function App() {
           <span className="name">VoiceForge</span>
         </div>
         <div className="top-right">
-          <p className="tag">Translate text into 20 languages and download it as an MP3.</p>
+          <p className="tag">Translate text into 20 languages and download it as an MP3</p>
           <button
             className="theme-toggle"
             onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
@@ -421,7 +423,7 @@ export default function App() {
 
           <textarea
             aria-label="Text to convert"
-            placeholder="Paste your notes or book summary here, or drop a .txt or .md file on this panel."
+            placeholder="Paste your notes or book summary here, or drop a .txt or .md file on this panel"
             value={inputText}
             onChange={(e) => { setInputText(e.target.value); if (step === "error") setStep("idle"); }}
             onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") handleConvert(); }}
@@ -443,6 +445,39 @@ export default function App() {
             )}
           </div>
 
+          {audioUrl && (
+            <div className="deck">
+              <button className="play" onClick={togglePlay} aria-label={isPlaying ? "Pause" : "Play"}>
+                {isPlaying
+                  ? <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1" /><rect x="14" y="4" width="4" height="16" rx="1" /></svg>
+                  : <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12-7.5a1 1 0 0 0 0-1.72l-12-7.5A1 1 0 0 0 7 4.5z" /></svg>}
+              </button>
+
+              <div className="deck-main">
+                <Waveform peaks={wave.peaks} progress={duration ? current / duration : 0} onSeek={seek} />
+                <div className="deck-meta">
+                  <p className="time"><span>{fmt(current)}</span> / {fmt(duration)}</p>
+                  <button className="download" onClick={handleDownload}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                    Download MP3
+                  </button>
+                </div>
+              </div>
+
+              <audio
+                ref={audioRef}
+                src={audioUrl}
+                onPlay={() => setIsPlaying(true)}
+                onPause={() => setIsPlaying(false)}
+                onEnded={() => { setIsPlaying(false); setCurrent(0); }}
+                onLoadedMetadata={() => setCurrent(0)}
+                hidden
+              />
+            </div>
+          )}
+
           <div className="result-body">
             {busy && (
               <div className="working-wrap">
@@ -453,7 +488,7 @@ export default function App() {
                 </div>
                 {partInfo.total > 1 && (
                   <div className="bar-track" aria-hidden="true">
-                    <div className="bar-fill" style={{ width: `${(partInfo.done / partInfo.total) * 100}%` }} />
+                    <div className="bar-fill" style={{ transform: `scaleX(${partInfo.done / partInfo.total})` }} />
                   </div>
                 )}
               </div>
@@ -471,107 +506,93 @@ export default function App() {
             )}
 
             {step === "idle" && !translatedText && (
-              <p className="empty">
-                <strong>Your translation appears here</strong>, with an MP3 player under it.
-                Pick a language, voice and speed below, then press Convert to MP3.
-              </p>
+              <div className="empty">
+                <p>
+                  <strong>Translation and audio appear here</strong>
+                  <span>Paste text on the left, set the voice below, then convert</span>
+                </p>
+                <div className="wave-sketch" aria-hidden="true">
+                  {SKETCH.map((p, i) => <span key={i} className="bar" style={{ height: `${p * 100}%` }} />)}
+                </div>
+              </div>
             )}
           </div>
 
-          {audioUrl && (
-            <div className="player">
-              <button className="play" onClick={togglePlay} aria-label={isPlaying ? "Pause" : "Play"}>
-                {isPlaying
-                  ? <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1" /><rect x="14" y="4" width="4" height="16" rx="1" /></svg>
-                  : <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12-7.5a1 1 0 0 0 0-1.72l-12-7.5A1 1 0 0 0 7 4.5z" /></svg>}
-              </button>
-
-              <Waveform peaks={wave.peaks} progress={duration ? current / duration : 0} onSeek={seek} />
-
-              <div className="player-meta">
-                <span>{fmt(current)} / {fmt(duration)}</span>
-                <button className="download" onClick={handleDownload}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
-                  </svg>
-                  Download MP3
-                </button>
-              </div>
-
-              <audio
-                ref={audioRef}
-                src={audioUrl}
-                onPlay={() => setIsPlaying(true)}
-                onPause={() => setIsPlaying(false)}
-                onEnded={() => { setIsPlaying(false); setCurrent(0); }}
-                onLoadedMetadata={() => setCurrent(0)}
-                hidden
-              />
-            </div>
-          )}
           {engineNote && <p className="note" role="status">{engineNote}</p>}
         </section>
       </main>
 
       {/* CONTROLS */}
       <div className="console">
-        <div className="field">
-          <label htmlFor="lang">{translate ? "Translate to" : "Read aloud in"}</label>
-          <select id="lang" value={targetLang} onChange={(e) => setTargetLang(e.target.value)}>
-            {LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
-          </select>
-        </div>
+        <div className="group" role="group" aria-labelledby="say-title">
+          <h3 className="group-title" id="say-title">What to say</h3>
+          <div className="group-body">
+            <div className="field">
+              <label htmlFor="lang">{translate ? "Translate to" : "Read aloud in"}</label>
+              <select id="lang" value={targetLang} onChange={(e) => setTargetLang(e.target.value)}>
+                {LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
+              </select>
+            </div>
 
-        <div className="field">
-          <span className="label" id="translate-label">Translation</span>
-          <div className="seg" role="group" aria-labelledby="translate-label">
-            <button aria-pressed={translate} onClick={() => setTranslate(true)}>On</button>
-            <button aria-pressed={!translate} onClick={() => setTranslate(false)}>Off</button>
+            <div className="field">
+              <span className="label" id="translate-label">Translation</span>
+              <div className="seg" role="group" aria-labelledby="translate-label">
+                <button aria-pressed={translate} onClick={() => setTranslate(true)}>On</button>
+                <button aria-pressed={!translate} onClick={() => setTranslate(false)}>Off</button>
+              </div>
+            </div>
+
+            <div className="field">
+              <label htmlFor="style">Reading style</label>
+              <select id="style" className="select-sm" value={style} onChange={(e) => setStyle(e.target.value)}>
+                {STYLES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+              </select>
+            </div>
           </div>
         </div>
 
-        <div className="field">
-          <span className="label" id="voice-label">Voice</span>
-          <div className="seg" role="group" aria-labelledby="voice-label">
-            {["male", "female"].map((v) => (
-              <button key={v} aria-pressed={voice === v} onClick={() => setVoice(v)}>
-                {v === "male" ? "Male" : "Female"}
-              </button>
-            ))}
+        <div className="group" role="group" aria-labelledby="sound-title">
+          <h3 className="group-title" id="sound-title">How it sounds</h3>
+          <div className="group-body">
+            <div className="field">
+              <span className="label" id="voice-label">Voice</span>
+              <div className="seg" role="group" aria-labelledby="voice-label">
+                {["male", "female"].map((v) => (
+                  <button key={v} aria-pressed={voice === v} onClick={() => setVoice(v)}>
+                    {v === "male" ? "Male" : "Female"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="field">
+              <span className="label" id="engine-label">Voice quality</span>
+              <div className="seg" role="group" aria-labelledby="engine-label">
+                <button aria-pressed={engine === "realistic"} onClick={() => setEngine("realistic")}>Realistic</button>
+                <button aria-pressed={engine === "standard"} onClick={() => setEngine("standard")}>Standard</button>
+              </div>
+            </div>
+
+            <div className="field">
+              <span className="label" id="speed-label">Speed</span>
+              <div className="seg" role="group" aria-labelledby="speed-label">
+                {["slow", "normal", "fast"].map((s) => (
+                  <button key={s} aria-pressed={speed === s} onClick={() => setSpeed(s)}>
+                    {s[0].toUpperCase() + s.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
 
-        <div className="field">
-          <span className="label" id="engine-label">Voice quality</span>
-          <div className="seg" role="group" aria-labelledby="engine-label">
-            <button aria-pressed={engine === "realistic"} onClick={() => setEngine("realistic")}>Realistic</button>
-            <button aria-pressed={engine === "standard"} onClick={() => setEngine("standard")}>Standard</button>
-          </div>
+        <div className="convert-row">
+          <span className="shortcut"><kbd>Ctrl</kbd><kbd>Enter</kbd><span>from the text box</span></span>
+          <button className="convert" onClick={handleConvert} disabled={!inputText.trim() || busy}>
+            {busy ? <><span className="spinner" />{partInfo.total > 1 ? `${partInfo.done}/${partInfo.total} done` : "Working…"}</> : "Convert to MP3"}
+          </button>
         </div>
-
-        <div className="field">
-          <label htmlFor="style">Reading style</label>
-          <select id="style" className="select-sm" value={style} onChange={(e) => setStyle(e.target.value)}>
-            {STYLES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-          </select>
-        </div>
-
-        <div className="field">
-          <span className="label" id="speed-label">Speed</span>
-          <div className="seg" role="group" aria-labelledby="speed-label">
-            {["slow", "normal", "fast"].map((s) => (
-              <button key={s} aria-pressed={speed === s} onClick={() => setSpeed(s)}>
-                {s[0].toUpperCase() + s.slice(1)}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <button className="convert" onClick={handleConvert} disabled={!inputText.trim() || busy}>
-          {busy ? <><span className="spinner" />{partInfo.total > 1 ? `${partInfo.done}/${partInfo.total} done` : "Working…"}</> : "Convert to MP3"}
-        </button>
       </div>
-      <p className="hint">Tip: press Ctrl + Enter in the text box to convert.</p>
     </div>
   );
 }
